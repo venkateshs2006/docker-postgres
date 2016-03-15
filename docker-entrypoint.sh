@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-set_listen_addresses() {
-	sedEscapedValue="$(echo "$1" | sed 's/[\/&]/\\&/g')"
-	sed -ri "s/^#?(listen_addresses\s*=\s*)\S+/\1'$sedEscapedValue'/" "$PGDATA/postgresql.conf"
-}
+if [ "${1:0:1}" = '-' ]; then
+	set -- postgres "$@"
+fi
 
 if [ "$1" = 'postgres' ]; then
 	mkdir -p "$PGDATA"
+	chmod 700 "$PGDATA"
 	chown -R postgres "$PGDATA"
 
 	chmod g+s /run/postgresql
@@ -43,16 +43,16 @@ if [ "$1" = 'postgres' ]; then
 
 		{ echo; echo "hostssl all all 0.0.0.0/0 $authMethod"; } >> "$PGDATA/pg_hba.conf"
 
-    # SSL SETUP
-    mkdir -p "$PGDATA/ssl"
-    openssl req -new -newkey rsa:1024 -days 365000 -nodes -x509 -keyout "$PGDATA/ssl/server.key" -subj "/CN=PostgreSQL" -out "$PGDATA/ssl/server.crt"
-    chmod og-rwx "$PGDATA/ssl/server.key"
-    chown -R postgres:postgres "$PGDATA/ssl"
+		# SSL SETUP
+		mkdir -p "$PGDATA/ssl"
+		openssl req -new -newkey rsa:1024 -days 365000 -nodes -x509 -keyout "$PGDATA/ssl/server.key" -subj "/CN=PostgreSQL" -out "$PGDATA/ssl/server.crt"
+		chmod og-rwx "$PGDATA/ssl/server.key"
+		chown -R postgres:postgres "$PGDATA/ssl"
 
-    sed -i "s|#\?ssl \?=.*|ssl = on|g" "$PGDATA/postgresql.conf"
-    sed -i "s|#\?ssl_cert_file \?=.*|ssl_cert_file = '$PGDATA/ssl/server.crt'|g" "$PGDATA/postgresql.conf"
-    sed -i "s|#\?ssl_key_file \?=.*|ssl_key_file = '$PGDATA/ssl/server.key'|g" "$PGDATA/postgresql.conf"
-    # END SSL SETUP
+		sed -i "s|#\?ssl \?=.*|ssl = on|g" "$PGDATA/postgresql.conf"
+		sed -i "s|#\?ssl_cert_file \?=.*|ssl_cert_file = '$PGDATA/ssl/server.crt'|g" "$PGDATA/postgresql.conf"
+		sed -i "s|#\?ssl_key_file \?=.*|ssl_key_file = '$PGDATA/ssl/server.key'|g" "$PGDATA/postgresql.conf"
+		# END SSL SETUP
 
 		# internal start of server in order to allow set-up using psql-client
 		# does not listen on TCP/IP and waits until start finishes
@@ -62,9 +62,12 @@ if [ "$1" = 'postgres' ]; then
 
 		: ${POSTGRES_USER:=postgres}
 		: ${POSTGRES_DB:=$POSTGRES_USER}
+		export POSTGRES_USER POSTGRES_DB
+
+		psql=( psql -v ON_ERROR_STOP=1 )
 
 		if [ "$POSTGRES_DB" != 'postgres' ]; then
-			psql --username postgres <<-EOSQL
+			"${psql[@]}" --username postgres <<-EOSQL
 				CREATE DATABASE "$POSTGRES_DB" ;
 			EOSQL
 			echo
@@ -75,24 +78,25 @@ if [ "$1" = 'postgres' ]; then
 		else
 			op='CREATE'
 		fi
-
-		psql --username postgres <<-EOSQL
+		"${psql[@]}" --username postgres <<-EOSQL
 			$op USER "$POSTGRES_USER" WITH SUPERUSER $pass ;
 		EOSQL
 		echo
 
+		psql+=( --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" )
+
 		echo
 		for f in /docker-entrypoint-initdb.d/*; do
 			case "$f" in
-				*.sh)  echo "$0: running $f"; . "$f" ;;
-				*.sql) echo "$0: running $f"; psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" < "$f" && echo ;;
-				*)     echo "$0: ignoring $f" ;;
+				*.sh)     echo "$0: running $f"; . "$f" ;;
+				*.sql)    echo "$0: running $f"; "${psql[@]}" < "$f"; echo ;;
+				*.sql.gz) echo "$0: running $f"; gunzip -c "$f" | "${psql[@]}"; echo ;;
+				*)        echo "$0: ignoring $f" ;;
 			esac
 			echo
 		done
 
 		gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop
-		set_listen_addresses '*'
 
 		echo
 		echo 'PostgreSQL init process complete; ready for start up.'
