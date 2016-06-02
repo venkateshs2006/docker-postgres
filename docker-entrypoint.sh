@@ -15,7 +15,7 @@ if [ "$1" = 'postgres' ]; then
 
 	# look specifically for PG_VERSION, as it is expected in the DB dir
 	if [ ! -s "$PGDATA/PG_VERSION" ]; then
-		gosu postgres initdb --locale="en_US.UTF-8" --encoding="UTF-8"
+		eval "gosu postgres initdb $POSTGRES_INITDB_ARGS"
 
 		# check password first so we can output the warning before postgres
 		# messes it up
@@ -32,6 +32,7 @@ if [ "$1" = 'postgres' ]; then
 				         Docker's default configuration, this is
 				         effectively any other container on the same
 				         system.
+
 				         Use "-e POSTGRES_PASSWORD=password" to set
 				         it in "docker run".
 				****************************************************
@@ -41,23 +42,23 @@ if [ "$1" = 'postgres' ]; then
 			authMethod=trust
 		fi
 
-		{ echo; echo "hostssl all all 0.0.0.0/0 $authMethod"; } >> "$PGDATA/pg_hba.conf"
+		if [[ ! -z "$POSTGRES_ENABLE_SSL" && ! $POSTGRES_ENABLE_SSL =~ ^([nN][oO]|[nN]|[fF][aA][lL][sS][eE]|[fF]|0)$ ]] ; then
+			{ echo; echo "hostssl all all 0.0.0.0/0 $authMethod"; } >> "$PGDATA/pg_hba.conf"
 
-		# SSL SETUP
-		mkdir -p "$PGDATA/ssl"
-		openssl req -new -newkey rsa:1024 -days 365000 -nodes -x509 -keyout "$PGDATA/ssl/server.key" -subj "/CN=PostgreSQL" -out "$PGDATA/ssl/server.crt"
-		chmod og-rwx "$PGDATA/ssl/server.key"
-		chown -R postgres:postgres "$PGDATA/ssl"
+			openssl req -new -newkey rsa:1024 -days 365000 -nodes -x509 -keyout "$PGDATA/server.key" -subj "/CN=PostgreSQL" -out "$PGDATA/server.crt"
+			chown postgres "$PGDATA/server.crt"
+			chown postgres "$PGDATA/server.key"
+			chmod og-rwx "$PGDATA/server.key"
 
-		sed -i "s|#\?ssl \?=.*|ssl = on|g" "$PGDATA/postgresql.conf"
-		sed -i "s|#\?ssl_cert_file \?=.*|ssl_cert_file = '$PGDATA/ssl/server.crt'|g" "$PGDATA/postgresql.conf"
-		sed -i "s|#\?ssl_key_file \?=.*|ssl_key_file = '$PGDATA/ssl/server.key'|g" "$PGDATA/postgresql.conf"
-		# END SSL SETUP
+			sed -i "s|#\?ssl \?=.*|ssl = on|g" "$PGDATA/postgresql.conf"
+		else
+			{ echo; echo "host all all 0.0.0.0/0 $authMethod"; } >> "$PGDATA/pg_hba.conf"
+		fi
 
 		# internal start of server in order to allow set-up using psql-client
-		# does not listen on TCP/IP and waits until start finishes
+		# does not listen on external TCP/IP and waits until start finishes
 		gosu postgres pg_ctl -D "$PGDATA" \
-			-o "-c listen_addresses=''" \
+			-o "-c listen_addresses='localhost'" \
 			-w start
 
 		: ${POSTGRES_USER:=postgres}
