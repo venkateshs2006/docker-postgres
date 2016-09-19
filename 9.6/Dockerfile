@@ -1,4 +1,4 @@
-FROM postgres:9.3
+FROM postgres:9.6
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y ssl-cert && \

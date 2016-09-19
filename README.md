@@ -1,6 +1,6 @@
 # postgres
 
-Docker image which adds postgis and TLS support to the official image.
+Docker image which adds TLS support to the official image.
 
 Note that while using this image, a TLS connection is mandatory. Run with `-e POSTGRES_ENABLE_TLS=no` to disable TLS.
 
